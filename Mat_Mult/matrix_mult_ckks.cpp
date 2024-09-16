@@ -1,11 +1,13 @@
 #include "matrix_mult_ckks.h"
 
-const int l = 8;
-const int d = 8;
-const int t = 4;
+
+const int d = 128;
+const int d_sq = (int)(sqrt(d));
 const int d_log =(int)(log2(d));
 const int n=d*d;
 int RingDim=1<<16;
+int packing=std::min(d,(int)(RingDim/(2*d*d)));
+int n_ct=(int)(d/packing);
 
 
 MatrixMultCKKS::MatrixMultCKKS(std::string ccLocation, std::string pubKeyLocation, std::string multKeyLocation,
@@ -67,44 +69,55 @@ void MatrixMultCKKS::eval()
     // We need to generate mult keys
     m_cc->EvalMultKeyGen(keyPair.secretKey);
 
-    int rot_keys_counter= 2*d_log+2*(d)+3*(int)(log2(d));
+    int rot_keys_counter= 2*d_log+2*(n_ct-1)+3*(int)(log2(packing));
+
+    std::cout << std::endl << "Total ROTATIONS:" << ( n_ct*2*d_log+2*(n_ct-1)+3*(int)(log2(packing))) << std::endl;
+    std::cout << std::endl << "Total MULTIPLICATIONS:" << ( 3*n_ct) << std::endl;
+    std::cout << std::endl << "Total PLAINTEXT MULTIPLICATIONS:" << ( 2*n_ct) << std::endl;
+    std::cout << std::endl << "Total CIPHERTEXT MULTIPLICATIONS:" << ( n_ct) << std::endl;
+
     std::vector<int> rot_keys(rot_keys_counter);
-    int ctr=0;
+
     for(int i=0;i<d_log;i++){
-        rot_keys[ctr++]=-pow(2,i);    
-        rot_keys[ctr++]=-pow(2,i)*d;     
+        rot_keys[2*i]=-pow(2,i);
+        rot_keys[2*i+1]=-pow(2,i)*d;
     }
-    for(int i=0;i<d;i++){
-        rot_keys[ctr++]=(d)*(i+1);
-        rot_keys[ctr++]=(d)*d*(i+1);
+    for(int i=0;i<n_ct-1;i++){
+        rot_keys[2*i+2*d_log]=(packing)*(i+1);
+        rot_keys[2*i+2*d_log+1]=(packing)*d*(i+1);
     }
-    for(int i=0;i<(int)(log2(d));i++){
-        rot_keys[ctr++]=-d*d*pow(2,i)+pow(2,i);
-        rot_keys[ctr++]=-d*d*pow(2,i)+(pow(2,i)*t);
-        rot_keys[ctr++]=n*pow(2,i);
+    for(int i=0;i<(int)(log2(packing));i++){
+        rot_keys[3*i+2*d_log+2*n_ct-2]=-n*pow(2,i)+pow(2,i);
+        rot_keys[3*i+2*d_log+2*n_ct-2+1]=-n*pow(2,i)+pow(2,i)*d;
+        rot_keys[3*i+2*d_log+2*n_ct-2+2]=n*pow(2,i);
     }
 
     
+    
+
+
+    //std::cout  << "rotkey gen: "  << rot_keys << std::endl;
     m_cc->EvalRotateKeyGen(keyPair.secretKey,rot_keys);
 
-    std::vector<double> input_matA(l*d);
-    std::vector<double> input_matB(d*t);
+    std::vector<double> input_matA(n);
+    std::vector<double> input_matB(n);
     
-    double a[l][d], b[d][t], mult[l][t];
+    double a[d][d], b[d][d], mult[d][d];
 
-
-    for(int i=0;i<(l*d);i++){
-        a[(int)(i/d)][i%d]= static_cast <double> (rand()) / ( static_cast <double> (RAND_MAX/(4.4-2.2)))-1;
+    //std::cout << std::endl << " Matrix gen: " << std::endl;
+    
+    for(int i=0;i<(n);i++){
+    	a[(int)(i/d)][i%d]= static_cast <double> (rand()) / ( static_cast <double> (RAND_MAX/(4.4-2.2)))-1;
     	input_matA[i]=a[(int)(i/d)][i%d];
+    	b[(int)(i/d)][i%d]= static_cast <double> (rand()) / ( static_cast <double> (RAND_MAX/(4.4-2.2)))-1;
+    	input_matB[i]=b[(int)(i/d)][i%d];
     }
-    for(int i=0;i<(d*t);i++){
-        b[(int)(i/t)][i%t]= static_cast <double> (rand()) / ( static_cast <double> (RAND_MAX/(4.4-2.2)))-1;
-    	input_matB[i]=b[(int)(i/t)][i%t];
-    }
-
+    //std::cout << "Matrix 1 \n\t" << input_matA << std::endl << std::endl;
+    //std::cout << "Matrix 2 \n\t" << input_matB << std::endl << std::endl;
+    
     // Initializing elements of matrix mult to 0.
-    for(int i = 0; i < l; ++i)
-        for(int j = 0; j < t; ++j)
+    for(int i = 0; i < d; ++i)
+        for(int j = 0; j < d; ++j)
         {
             mult[i][j]=0;
         }
@@ -112,22 +125,31 @@ void MatrixMultCKKS::eval()
 
     // Multiplying matrix a and b and storing in array mult.
     //std::cout << std::endl << "Multiplying Matrix: " << std::endl;
-    for(int i = 0; i < l; ++i)
-        for(int j = 0; j < t; ++j)
+    for(int i = 0; i < d; ++i)
+        for(int j = 0; j < d; ++j)
             for(int k = 0; k < d; ++k)
             {
                 mult[i][j] += a[i][k] * b[k][j];
             }
 
-
+    // Displaying the multiplication of two matrix.
+    
+    //std::cout << std::endl << "Output Matrix: " << std::endl;
+    /*for(int i = 0; i < d; ++i)
+    for(int j = 0; j < d; ++j)
+    {
+        std::cout << " " << mult[i][j];
+        if(j == (d-1))
+        
+            std::cout << std::endl;
+    }*/
+    
+    
     
 
-    size_t encodedLength = n;
-    Plaintext temp;
-    std::vector<std::complex<double>> finalResult2;
+    size_t encodedLength = input_matA.size();
     
     //Matrix encoding and encryption
-    
     Ciphertext<DCRTPoly> temp1, temp2;
     Plaintext plaintext  = m_cc->MakeCKKSPackedPlaintext(input_matA);
     temp1           = m_cc->Encrypt(keyPair.publicKey, plaintext);
@@ -139,28 +161,26 @@ void MatrixMultCKKS::eval()
     
     //---------------------- Multiplication evaluation -----------------------------------
     
-   // std::cout << std::endl << "EVAL MULT STARTS " << std::endl;
-   clock_t begin = clock();
+    std::cout << std::endl << "EVAL MULT STARTS " << std::endl;
+    
+    clock_t begin = clock();
 
 
-    std::vector<double> mask1(d*d*d,0);
+    std::vector<double> mask1(packing*n,0);
     std::vector<std::vector<double>> mask;
     mask.push_back(mask1);
     mask.push_back(mask1);
     
     
-    Ciphertext<DCRTPoly> out;
+    std::vector<Ciphertext<DCRTPoly>> out(n_ct);
     std::vector<Plaintext> plaintext_mask(2);
-    
-    for(int kloop=0;kloop<2*d;kloop++){   
-
-            int tem= l*(1-(kloop%2))+t*(kloop%2);     
-		        for(int i=0;i<tem;i++){
-		                int t=(kloop%2)*(i)+(1-(kloop%2))*(i*d);
-			    	mask[(kloop%2)][t+(int)(kloop/2)*d*d]=1 ;
+    #pragma omp parallel for collapse(2)
+    for(int k=0;k<2*packing;k++){
+		        for(int i=0;i<d;i++){
+		                int t=(k%2)*(i)+(1-(k%2))*(i*d);
+			    	mask[(k%2)][t+(int)(k/2)*n]=1 ;
 			    }
 		    }
-
     
     
     #pragma omp parallel for
@@ -168,15 +188,18 @@ void MatrixMultCKKS::eval()
     	plaintext_mask[j]  = m_cc->MakeCKKSPackedPlaintext(mask[j]);
     }
     
-    for(int n_runs=0;n_runs<100;n_runs++){
-    	m_MatrixAC=temp1;
+    for(int nruns=0;nruns<100;nruns++){
+    
+    m_MatrixAC=temp1;
     m_MatrixBC=temp2;
-    for(int k=0;k<d_log;k++)
-        {   
-             m_MatrixAC=m_cc->EvalAdd(m_MatrixAC,m_cc->EvalRotate(m_MatrixAC,-d*d*pow(2,k)+pow(2,k)));
-            m_MatrixBC=m_cc->EvalAdd(m_MatrixBC,m_cc->EvalRotate(m_MatrixBC,-d*d*pow(2,k)+(pow(2,k)*t)));
-        }
-
+   
+    
+   
+    for(int k=0;k<(int)(log2(packing));k++)
+    {   
+	    m_MatrixAC=m_cc->EvalAdd(m_MatrixAC,m_cc->EvalRotate(m_MatrixAC,-n*pow(2,k)+pow(2,k)));
+	    m_MatrixBC=m_cc->EvalAdd(m_MatrixBC,m_cc->EvalRotate(m_MatrixBC,-n*pow(2,k)+pow(2,k)*d));
+    }
     
     
 
@@ -185,54 +208,95 @@ void MatrixMultCKKS::eval()
     
     
 	
-    std::vector<Ciphertext<DCRTPoly>> ab1(2),ab2(2);
-    ab1[0]=m_MatrixAC;
-    ab1[1]=m_MatrixBC;
+     #pragma omp parallel for shared(m_MatrixAC,m_MatrixBC,plaintext_mask)
+    for(int t=0;t<n_ct;t++){
+        std::vector<Ciphertext<DCRTPoly>> ab1(2),ab2(2);
+	    if(t!=0){    
+		        #pragma omp parallel sections
+			    {   
+				    #pragma omp section
+				   ab1[0]=m_cc->EvalRotate(m_MatrixAC,packing*t);
+				    #pragma omp section
+				   ab1[1]=m_cc->EvalRotate(m_MatrixBC,packing*t*d);
+			    }        
+	     }
+	    else{
+		    #pragma omp parallel sections
+			    {   
+				    #pragma omp section
+				   ab1[0]=m_MatrixAC;
+				    #pragma omp section
+				   ab1[1]=m_MatrixBC;
+			    }	        
+	     }
 
-    //std::cout << std::endl << " LOOP initial Rotates done " << std::endl;
+        // std::cout << std::endl << " LOOP initial Rotates done " << std::endl;
 	
              
-    //#pragma omp parallel for
-	 int j=0;
+          //#pragma omp parallel for
+	 for(int j=0;j<2;j++){
 	    	ab1[j]  =m_cc->EvalMult(ab1[j],plaintext_mask[j]);
 	    	m_cc->ModReduceInPlace(ab1[j]);
-            //std::cout << std::endl << " LOOP initial Rotates done "<< j << " " << std::endl;
-	
-	    	for(int kl=0;kl<int(log2(d));kl++){
-		    	int mo=-1*pow(2,kl);
-		    	ab2[j]=m_cc->EvalRotate(ab1[j],mo*pow(d,j));
-			    ab1[j]=m_cc->EvalAdd(ab1[j],ab2[j]);	 
+	    	for(int k=0;k<d_log;k++){
+		    	int l=-1*pow(2,k);
+		    	ab2[j]=m_cc->EvalRotate(ab1[j],l*pow(d,j));
+			ab1[j]=m_cc->EvalAdd(ab1[j],ab2[j]);	 
 		    }
-
-    j=1;
-    ab1[j]  =m_cc->EvalMult(ab1[j],plaintext_mask[j]);
-	    	m_cc->ModReduceInPlace(ab1[j]);
-           // std::cout << std::endl << " LOOP initial Rotates done "<< j << " " << std::endl;
-	
-	    	for(int kl=0;kl<int(log2(d));kl++){
-		    	int mo=-1*pow(2,kl);
-		    	ab2[j]=m_cc->EvalRotate(ab1[j],mo*pow(d,j));
-			    ab1[j]=m_cc->EvalAdd(ab1[j],ab2[j]);	 
-		    }
-
-	
+	 }
+	      
 	    
-    out=m_cc->EvalMult(ab1[0],ab1[1]);
-    m_cc->ModReduceInPlace(out);
-
-    for(int k=0;k<(int)(log2(d));k++)
-        {   
-             out=m_cc->EvalAdd(out,m_cc->EvalRotate(out,pow(2,k)*n)); 
-        } 
-        
-       }
-
+	     out[t]=m_cc->EvalMult(ab1[0],ab1[1]);
+    	    m_cc->ModReduceInPlace(out[t]);
+	    
+	   
+    }
     
-    m_OutputC=out;
+			   
+	    for(int i=1;i<=(int)(log2(n_ct));i++){
+            #pragma omp parallel for 
+	        for(int t=0;t<(int)(n_ct/pow(2,i));t++){
+                m_cc->EvalAddInPlace(out[t], out[t+(int)(n_ct/pow(2,i))]);
+            }
+        }
+
+
+    for(int k=0;k<(int)(log2(packing));k++)
+        {   
+             out[0]=m_cc->EvalAdd(out[0],m_cc->EvalRotate(out[0],pow(2,k)*n)); 
+        }  
+
+    m_OutputC=out[0];
+    
+    }
     
     clock_t end = clock();
-   double time_spent = (double)(end - begin) / (100*CLOCKS_PER_SEC);
+    double time_spent = (double)(end - begin) / (100*CLOCKS_PER_SEC);
     
+    
+    
+    
+
+     
+   
+	   /* Plaintext temp;
+	   m_cc->Decrypt(keyPair.secretKey, m_OutputC, &temp);
+	    temp->SetLength(encodedLength);
+    	    std::vector<std::complex<double>> finalResult2 = temp->GetCKKSPackedValue();   
+           std::cout << " Input 1 \n\t" << finalResult2 << std::endl << std::endl;
+           //m_cc->Decrypt(keyPair.secretKey, b1, &temp);
+	   */
+	    
+	    
+	    
+	   
+	    
+    
+
+    
+
+   // std::cout << " NoiseScale output \n\t" << m_OutputC->GetNoiseScaleDeg() << std::endl << std::endl;
+    
+
 
 
     
@@ -252,8 +316,8 @@ void MatrixMultCKKS::eval()
 
     std::vector<std::complex<double>> finalResult = plaintextDec->GetCKKSPackedValue();
     std::complex<double> error=0;
-    for(int i=0;i<(l*t);i++){
-    	error+=(finalResult[i+((int)(i/t)*(int)(d-t))])-(std::complex<double>)(mult[(int)(i/t)][i%t]);
+    for(int i=0;i<(n);i++){
+    	error+=(finalResult[i])-(std::complex<double>)(mult[(int)(i/d)][i%d]);
     	
     	}
     
@@ -268,6 +332,5 @@ void MatrixMultCKKS::eval()
 
 void MatrixMultCKKS::deserializeOutput()
 {
-    
 
 }
